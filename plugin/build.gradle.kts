@@ -20,6 +20,6 @@ android {
 }
 
 dependencies {
-    compileOnly("org.godotengine:godot:3.5.2")
+    compileOnly("org.godotengine:godot:4.2.1.stable")
     implementation("androidx.core:core-ktx:1.9.0")
 }
