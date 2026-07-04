@@ -1,0 +1,6 @@
+[config]
+name="VideoExport"
+binary="videoexport-release.aar"
+
+[android]
+dependencies=[]
