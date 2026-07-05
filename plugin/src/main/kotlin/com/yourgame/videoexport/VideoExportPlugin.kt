@@ -1,9 +1,7 @@
 package com.yourgame.videoexport
 
 import android.content.ContentValues
-import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -13,6 +11,7 @@ import android.provider.MediaStore
 import org.godotengine.godot.Godot
 import org.godotengine.godot.plugin.GodotPlugin
 import java.io.File
+import java.nio.ByteBuffer
 
 class VideoExportPlugin(godot: Godot) : GodotPlugin(godot) {
     private var codec: MediaCodec? = null
@@ -33,11 +32,10 @@ class VideoExportPlugin(godot: Godot) : GodotPlugin(godot) {
         frameDurationUs = 1_000_000L / fps
         presentationTimeUs = 0L
 
-        outputFile = File(activity!!.cacheDir, fileName)
+        outputFile = if (fileName.startsWith("/")) File(fileName) else File(activity!!.cacheDir, fileName)
         val mime = "video/avc"
         val format = MediaFormat.createVideoFormat(mime, width, height).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT,
-                MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
             setInteger(MediaFormat.KEY_BIT_RATE, 4_000_000)
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
@@ -52,10 +50,10 @@ class VideoExportPlugin(godot: Godot) : GodotPlugin(godot) {
         trackIndex = -1
     }
 
-    fun addFrame(jpegBytes: ByteArray) {
+    fun addFrame(rgbaBytes: ByteArray) {
         val codec = this.codec ?: return
-        val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
-        if (bitmap == null) return
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(rgbaBytes))
 
         val yuvBytes = bitmapToYuv420(bitmap, width, height)
         bitmap.recycle()
@@ -72,16 +70,22 @@ class VideoExportPlugin(godot: Godot) : GodotPlugin(godot) {
     }
 
     fun finishEncoderAndSaveToGallery(displayName: String) {
-        codec?.signalEndOfInputStream()
-        drainEncoder()
-        codec?.stop()
-        codec?.release()
-        muxer?.stop()
-        muxer?.release()
-
-        outputFile?.let { file ->
-            saveToGallery(file, displayName)
-            file.delete()
+        try {
+            codec?.signalEndOfInputStream()
+            drainEncoder()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            codec?.stop()
+            codec?.release()
+            codec = null
+            
+            if (muxerStarted) {
+                muxer?.stop()
+                muxer?.release()
+                muxer = null
+                muxerStarted = false
+            }
         }
     }
 
@@ -107,22 +111,6 @@ class VideoExportPlugin(godot: Godot) : GodotPlugin(godot) {
                 codec.releaseOutputBuffer(outId, false)
                 if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
             } else break
-        }
-    }
-
-    private fun saveToGallery(file: File, name: String) {
-        val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, name)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES)
-        }
-        val uri = activity?.contentResolver?.insert(
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values
-        )
-        uri?.let {
-            activity?.contentResolver?.openOutputStream(it)?.use { os ->
-                file.inputStream().use { inp -> inp.copyTo(os) }
-            }
         }
     }
 
